@@ -1,0 +1,1068 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- import CSS -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/element-ui/lib/theme-chalk/index.css"
+    />
+    <title>Color Checker Utility</title>
+  </head>
+
+  <body>
+    <style>
+      .l {
+        margin-left: 20px;
+      }
+    </style>
+    <div id="app">
+      <el-menu
+        :default-active="activeIndex"
+        background-color="#545c64"
+        text-color="#fff"
+        active-text-color="#ffd04b"
+        mode="horizontal"
+        @select="menu_item_change"
+      >
+        <el-menu-item index="image">Image</el-menu-item>
+        <el-menu-item index="rgb">RGB curve</el-menu-item>
+        <el-menu-item index="video" :disabled="false">Video</el-menu-item>
+        <el-menu-item index="color">Color Selector</el-menu-item>
+      </el-menu>
+
+      <!--Video control panal-->
+      <div v-if="activeIndex=='video'">
+        <el-button size="small" @click="open_video">Open file</el-button>
+        <input
+          type="file"
+          accept="video/*"
+          ref="video_input"
+          v-show="false"
+          @change="video_file_select"
+        />
+        <el-button size="small" @click="video_lock">
+          {% verbatim %}{{video_controls ? 'Lock' : 'Unlock'}}{% endverbatim %}
+        </el-button>
+        <el-button-group>
+          <el-button
+            size="small"
+            icon="el-icon-s-tools"
+            @click="setting_page_show"
+          ></el-button>
+          <el-button type="primary" size="small" @click="video_start_reacord"
+            >Start</el-button
+          >
+        </el-button-group>
+        <span>
+          Progress {%verbatim%}{{video_frame_current}}{%endverbatim%}
+        </span>
+        <span>/{%verbatim%}{{video_frame_total}}{%endverbatim%}</span>
+      </div>
+      <el-button
+        v-if="activeIndex=='image'||activeIndex=='rgb'"
+        type="primary"
+        size="small"
+        type="seccess"
+        @click="upload_image('image')"
+        style="margin: 8px 0px 8px 0px"
+        >Upload</el-button
+      >
+      <el-upload
+        v-if="activeIndex=='image'||activeIndex=='rgb'"
+        :auto-upload="false"
+        :multiple="false"
+        :on-exceed="file_out_of_number"
+        accept="image/*"
+        :show-file-list="true"
+        list-type="picture-card"
+        :limit="1"
+        ref="upload"
+        action="/upload/"
+        :on-success="file_image_get_response"
+      >
+        <span>Click to add image</span>
+      </el-upload>
+
+      <!-- Video layer -->
+      <div v-if="activeIndex=='video'" style="width: 100vw; height: 56vw">
+        <video
+          v-if="activeIndex=='video'"
+          ref="video"
+          :controls="video_controls"
+          @change="video_loaded"
+          style="width: 100vw; height: 56vw; position: absolute"
+        ></video>
+        <canvas
+          v-if="activeIndex=='video'"
+          ref="cover"
+          v-show="!video_controls"
+          @click="cover_click"
+          style="width: 100vw; height: 56vw; position: absolute"
+        >
+        </canvas>
+      </div>
+
+      <!--Output layer-->
+      <el-divider>Output</el-divider>
+      <div v-if="activeIndex=='image' || activeIndex=='color'">
+        <div style="display: flex; justify-content: flex-start">
+          <el-color-picker v-model="color_value"></el-color-picker>
+          <span style="margin-inline: 12px"
+            >{% verbatim %}{{color_value_string}}{% endverbatim %}</span
+          >
+          <el-button size="mini">export</el-button>
+        </div>
+        <canvas
+          ref="canvas"
+          style="width: calc(100vw - 16px)"
+          :onload="canvas_onload()"
+          @click="canvas_click"
+        ></canvas>
+        <a :href="blob_url" download="output.jpg" v-if="blob_url != ''"
+          >Download Image</a
+        >
+      </div>
+      <div v-if="activeIndex=='video'">
+        <el-button size="small" @click="render_video_chart"
+          >Generate chart</el-button
+        >
+        <el-select v-model="video_frame_channel">
+          <el-option
+            v-for="i in setting_page_item_parameter.channel_option"
+            :label="i.label"
+            :value="i.value"
+          ></el-option>
+        </el-select>
+        <el-button size="small" @click="download_dataset"
+          >Download Dataset</el-button
+        >
+      </div>
+      <div
+        ref="charts"
+        style="width: 100vw; height: 100vw"
+        v-if="activeIndex=='rgb'"
+      ></div>
+      <div
+        ref="video_charts"
+        style="width: 100vw; height: 56vw"
+        v-if="activeIndex=='video'"
+      ></div>
+
+      <!--Export layer-->
+
+      <!--Side-->
+      <el-drawer
+        title="Setting"
+        :visible.sync="setting_page_visible"
+        direction="rtl"
+      >
+        <div class="l">
+          <span class="l">Frame interval</span>
+          <el-slider
+            class="l"
+            :min="0.1"
+            :max="10.0"
+            :step="0.1"
+            v-model="video_frame_interval"
+            show-input
+          ></el-slider>
+          <el-button @click="export_config">Export</el-button>
+          <el-button @click="import_config">Import</el-button>
+        </div>
+        <el-collapse
+          accordion
+          v-model="setting_page_index_display"
+          @change="setting_page_change"
+        >
+          <el-collapse-item
+            :name="i"
+            class="l"
+            v-for="(item, i) in setting_page_item"
+            :key="i"
+          >
+            <template slot="title">
+              <span>{% verbatim %}Point #{{i}}{% endverbatim%}</span>
+              <div
+                style="
+                  margin-left: 12px;
+                  margin-right: 12px;
+                  margin-top: auto;
+                  margin-bottom: auto;
+                  width: 30px;
+                  height: 30px;
+                "
+                :style="{'background-color': setting_page_item[i].color}"
+              ></div>
+              <span>
+                {% verbatim %}{{setting_page_item[i].color}}{% endverbatim%}
+              </span>
+              <i
+                style="transform: scale(1.5, 1.5); margin-left: 14px"
+                class="el-icon-success"
+                v-if="setting_page_index == i"
+              ></i>
+            </template>
+            <span>coordinate.X</span>
+            <el-slider
+              @input="cover_update"
+              @change="update_color"
+              class="l"
+              v-model="setting_page_item[i].pos.x"
+              show-input
+              :max="setting_page_item_parameter.x"
+            >
+            </el-slider>
+            <span>Coordinate.Y</span>
+            <el-slider
+              @input="cover_update"
+              @change="update_color"
+              class="l"
+              v-model="setting_page_item[i].pos.y"
+              show-input
+              :max="setting_page_item_parameter.y"
+            >
+            </el-slider>
+            <span>Shape</span>
+            <el-select
+              v-model="setting_page_item[i].type"
+              @change="cover_update"
+            >
+              <el-option
+                v-for="j in setting_page_item_parameter.type_option"
+                :key="j"
+                :value="j"
+                :label="j"
+              ></el-option>
+            </el-select>
+            <p>Radius</p>
+            <el-slider
+              @input="cover_update"
+              @change="update_color"
+              class="l"
+              v-model="setting_page_item[i].radius"
+              show-input
+            >
+            </el-slider>
+            <span>Capture type</span>
+            <el-select
+              v-model="setting_page_item[i].range"
+              @change="cover_update"
+            >
+              <el-option
+                v-for="jj in setting_page_item_parameter.range_option"
+                :key="jj"
+                :value="jj"
+                :label="jj"
+              ></el-option> </el-select
+            ><br />
+            <el-button
+              type="danger"
+              icon="el-icon-delete"
+              circle
+              @click="setting_page_delete_button_clicked(i)"
+            ></el-button>
+            <el-button
+              icon="el-icon-plus"
+              circle
+              @click="setting_page_add_button_clicked(i)"
+            ></el-button>
+          </el-collapse-item>
+        </el-collapse>
+      </el-drawer>
+
+      <!--table style="margin: auto">
+        <tr>
+          <th></th>
+          <th>
+            <el-button
+              type="primary"
+              size="small"
+              icon="el-icon-caret-top"
+            ></el-button>
+          </th>
+          <th></th>
+        </tr>
+        <tr>
+          <th>
+            <el-button
+              type="primary"
+              size="small"
+              icon="el-icon-caret-left"
+            ></el-button>
+          </th>
+          <th></th>
+          <th>
+            <el-button
+              type="primary"
+              size="small"
+              icon="el-icon-caret-right"
+            ></el-button>
+          </th>
+        </tr>
+        <tr>
+          <th></th>
+          <th>
+            <el-button
+              type="primary"
+              size="small"
+              icon="el-icon-caret-bottom"
+            ></el-button>
+          </th>
+          <th></th>
+        </tr>
+      </table-->
+    </div>
+  </body>
+  <!-- import Vue before Element -->
+  <script src="https://unpkg.com/vue@2/dist/vue.js"></script>
+  <!-- import JavaScript -->
+  <script src="https://unpkg.com/element-ui/lib/index.js"></script>
+  <script src="https://unpkg.com/axios@1.1.2/dist/axios.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+  <script>
+    a = new Vue({
+      el: "#app",
+      data: function () {
+        return {
+          activeIndex: "video",
+          ret: null,
+          blob_image: {},
+          blob_image_inst: {},
+          blob_url: "",
+          charts: { setOption: () => {}, dispose: () => {} },
+          curve: { r: [], g: [], b: [] },
+          camera: NaN,
+          camera_list: [],
+          camera_size: { width: 1280, height: 720 },
+          color_point_clicked: { x: null, y: null },
+          color_point_selected: { x: null, y: null },
+          color_selected: { r: 0, g: 0, b: 0 },
+          color_value: "",
+          color_value_string: "Click the image to watch the RGB value",
+          video_stream: {},
+          video_controls: true,
+          video_ready: false,
+          video_frame_next: 0,
+          video_frame_interval: 1.0,
+          video_frame_total: 0,
+          video_frame_current: 0,
+          video_frame_blob: {},
+          video_frame_blob_url: "",
+          video_frame_channel: 0,
+          video_frame_download_url: "",
+          video_frame_data: {
+            r: [
+              [
+                214, 214, 211, 211, 206, 208, 206, 207, 204, 210, 206, 207, 207,
+                204, 198, 201, 196, 199, 195, 198, 196, 199, 198, 199, 199, 199,
+                196, 194, 192, 194, 192, 195, 194, 196, 195, 191, 188,
+              ],
+            ],
+            g: [
+              [
+                219, 219, 217, 217, 215, 217, 215, 213, 213, 214, 215, 213, 213,
+                210, 207, 210, 209, 205, 206, 207, 206, 209, 209, 208, 208, 209,
+                206, 207, 204, 204, 202, 207, 204, 206, 205, 201, 198,
+              ],
+            ],
+            b: [
+              [
+                222, 222, 215, 217, 212, 214, 212, 213, 210, 213, 212, 211, 213,
+                206, 206, 207, 208, 201, 202, 204, 207, 207, 205, 205, 205, 208,
+                205, 205, 202, 204, 200, 203, 203, 204, 204, 200, 195,
+              ],
+            ],
+            gray: [
+              [
+                217.82559999999998, 217.82559999999998, 214.9569, 215.1849,
+                211.9464, 213.94619999999998, 211.9464, 211.1853, 209.9466,
+                212.669, 211.9464, 210.9573, 211.1853, 207.7296, 204.1752,
+                206.9469, 204.9794, 202.7301, 202.23549999999997,
+                203.94719999999998, 203.1044, 205.7621, 205.2352,
+                204.94709999999998, 204.94709999999998, 205.87609999999998,
+                202.8764, 202.8656, 200.16479999999999, 200.9906,
+                198.76280000000003, 202.93649999999997, 200.8766,
+                202.76239999999999, 201.8765, 197.8769, 194.64919999999998,
+              ],
+            ],
+          },
+          video_frame_data_time: Array.from({ length: 37 }, (val, i) => i),
+          video_charts: {},
+          setting_page_visible: false,
+          setting_page_item: [
+            {
+              pos: { x: 0, y: 0 },
+              radius: 2,
+              type: "circle",
+              range: "average",
+              color: "#123456",
+            },
+          ],
+          setting_page_item_parameter: {
+            x: 1920,
+            y: 1080,
+            type_option: ["circle", "square"],
+            range_option: ["max", "min", "average"],
+            channel_option: [
+              { value: 0, label: "red" },
+              { value: 1, label: "green" },
+              { value: 2, label: "blue" },
+              { value: 3, label: "gray" },
+            ],
+          },
+          setting_page_index_display: 0,
+          setting_page_index: 0,
+          path: "M 121.777 165.015 C 121.777 157.759 125.055 150.571 129.754 145.804 C 134.531 141.118 141.731 137.85 148.999 137.85 C 156.267 137.85 163.467 141.118 168.245 145.804 C 170.803 148.382 172.525 151.036 173.913 154.159 L 200.53 154.159 C 201.915 151.037 203.632 148.384 206.184 145.807 C 210.951 141.12 218.138 137.85 225.392 137.85 C 232.646 137.85 239.833 141.12 244.6 145.807 C 247.152 148.384 248.869 151.037 250.254 154.159 L 276.98 154.159 C 278.365 151.037 280.081 148.385 282.633 145.807 C 287.399 141.12 294.587 137.85 301.841 137.85 C 309.095 137.85 316.282 141.12 321.049 145.807 C 325.737 150.573 329.007 157.761 329.007 165.015 C 329.007 172.269 325.737 179.456 321.049 184.223 C 316.282 188.911 309.095 192.181 301.841 192.181 C 294.587 192.181 287.399 188.911 282.633 184.223 C 280.11 181.675 278.411 179.062 277.03 175.985 L 250.204 175.985 C 248.823 179.062 247.124 181.675 244.6 184.223 C 239.833 188.911 232.646 192.181 225.392 192.181 C 218.138 192.181 210.95 188.911 206.184 184.223 C 203.66 181.675 201.961 179.062 200.58 175.985 L 173.863 175.985 C 172.478 179.063 170.775 181.677 168.245 184.227 C 163.467 188.913 156.267 192.181 148.999 192.181 C 141.731 192.181 134.531 188.913 129.753 184.227 C 125.055 179.459 121.777 172.271 121.777 165.015 Z M 132.181 181.793 C 136.445 186.127 142.431 188.743 148.999 188.743 C 155.567 188.743 161.553 186.127 165.817 181.793 C 168.123 179.518 169.899 176.809 171.126 173.637 L 171.548 172.547 L 202.897 172.547 L 203.318 173.638 C 204.543 176.81 206.314 179.519 208.614 181.793 C 212.867 186.127 218.84 188.743 225.392 188.743 C 231.944 188.743 237.916 186.127 242.17 181.793 C 244.47 179.519 246.241 176.81 247.466 173.638 L 247.887 172.547 L 279.347 172.547 L 279.768 173.638 C 280.993 176.81 282.764 179.519 285.063 181.793 C 289.316 186.127 295.289 188.743 301.841 188.743 C 308.393 188.743 314.365 186.127 318.619 181.793 C 322.953 177.54 325.569 171.567 325.569 165.015 C 325.569 158.463 322.953 152.491 318.619 148.237 C 314.366 143.904 308.393 141.288 301.841 141.288 C 295.289 141.288 289.317 143.904 285.063 148.237 C 282.737 150.538 280.951 153.284 279.727 156.498 L 279.309 157.597 L 247.925 157.597 L 247.507 156.498 C 246.283 153.284 244.496 150.537 242.17 148.237 C 237.917 143.904 231.944 141.288 225.392 141.288 C 218.84 141.288 212.868 143.904 208.614 148.237 C 206.288 150.537 204.501 153.284 203.277 156.498 L 202.859 157.597 L 171.586 157.597 L 171.168 156.499 C 169.941 153.285 168.15 150.538 165.817 148.238 C 161.553 143.904 155.567 141.288 148.999 141.288 C 142.431 141.288 136.445 143.904 132.182 148.238 C 127.837 152.491 125.215 158.463 125.215 165.015 C 125.215 171.567 127.837 177.539 132.181 181.793 Z",
+        };
+      },
+      methods: {
+        menu_item_change: function (key, path) {
+          this.activeIndex = key;
+          if (key == "rgb") {
+            setTimeout(() => {
+              this.charts = echarts.init(this.$refs.charts);
+              this.charts.setOption({
+                title: { text: "Original ROI" },
+                xAxis: { min: 0, max: 255 },
+                yAxis: { min: 0, max: 255 },
+                series: [
+                  {
+                    name: "Standard curve",
+                    type: "line",
+                    data: [
+                      [0, 0],
+                      [255, 255],
+                    ],
+                  },
+                  {
+                    data: this.curve.r,
+                    type: "scatter",
+                    color: "red",
+                  },
+                  {
+                    data: this.curve.g,
+                    type: "scatter",
+                    color: "green",
+                  },
+                  {
+                    data: this.curve.b,
+                    type: "scatter",
+                    color: "blue",
+                  },
+                ],
+              });
+            }, 20);
+          } else {
+            this.charts.dispose();
+            this.charts = { setOption: () => {}, dispose: () => {} };
+          }
+        },
+
+        file_out_of_number: function () {
+          this.$message({
+            type: "warning",
+            message:
+              "Only accept 1 file, double click to delete the previous image.",
+          });
+        },
+
+        file_image_get_response: function (response, file, file_list) {
+          if (response.status == 0) {
+            this.$alert(response.des);
+            return;
+          }
+          this.ret = response.file;
+          let curve = response.curve;
+          let r = [],
+            g = [],
+            b = [];
+          for (let i = 0; i < curve[0].length; i++) {
+            r.push([curve[0][i], curve[1][i]]);
+            g.push([curve[2][i], curve[3][i]]);
+            b.push([curve[4][i], curve[5][i]]);
+          }
+          this.curve = { r: r, g: g, b: b };
+          if (this.activeIndex == "rgb") {
+            this.charts.setOption({
+              title: { text: "Original ROI" },
+              xAxis: { min: 0, max: 255 },
+              yAxis: { min: 0, max: 255 },
+              series: [
+                {
+                  name: "Standard curve",
+                  type: "line",
+                  data: [
+                    [0, 0],
+                    [255, 255],
+                  ],
+                },
+                {
+                  data: r,
+                  type: "scatter",
+                  color: "red",
+                },
+                {
+                  data: b,
+                  type: "scatter",
+                  color: "green",
+                },
+                {
+                  data: g,
+                  type: "scatter",
+                  color: "blue",
+                },
+              ],
+            });
+          }
+          axios
+            .post("/download/", { name: this.ret }, { responseType: "blob" })
+            .then((response) => {
+              this.blob_image = response.data.slice(
+                0,
+                response.data.size,
+                "image/jpeg"
+              );
+              this.blob_url = window.URL.createObjectURL(this.blob_image);
+            })
+            .catch((error) => {
+              console.log(error);
+            });
+        },
+
+        canvas_onload: function () {
+          if (this.blob_url != "") {
+            setTimeout(() => {
+              let ctx = this.$refs.canvas.getContext("2d");
+              this.blob_image_inst = new Image();
+              this.blob_image_inst.src = this.blob_url;
+              let self = this;
+              this.blob_image_inst.onload = function () {
+                self.$refs.canvas.width = self.blob_image_inst.width;
+                self.$refs.canvas.height = self.blob_image_inst.height;
+                ctx.drawImage(this, 0, 0);
+              };
+            }, 20);
+          }
+        },
+
+        canvas_click: function (e) {
+          if (this.blob_url == "") {
+            return;
+          }
+          this.color_point_clicked.x = e.offsetX;
+          this.color_point_clicked.y = e.offsetY;
+          this.point_calc();
+        },
+
+        point_calc: function () {
+          this.color_point_selected.x = Math.ceil(
+            this.color_point_clicked.x *
+              (this.blob_image_inst.width / this.$refs.canvas.offsetWidth)
+          );
+          this.color_point_selected.y = Math.ceil(
+            this.color_point_clicked.y *
+              (this.blob_image_inst.height / this.$refs.canvas.offsetHeight)
+          );
+          img = this.$refs.canvas
+            .getContext("2d")
+            .getImageData(
+              this.color_point_selected.x - 1,
+              this.color_point_selected.y - 1,
+              3,
+              3
+            ).data;
+          color_calc = function (img, offset) {
+            let sum = 0;
+            for (let i = 0; i < 9; i++) {
+              sum = sum + img[i * 4 + offset];
+            }
+            return Math.ceil(sum / 9);
+          };
+          this.color_selected.r = color_calc(img, 0);
+          this.color_selected.g = color_calc(img, 1);
+          this.color_selected.b = color_calc(img, 2);
+          this.color_value =
+            "#" +
+            this.color_selected.r.toString(16) +
+            this.color_selected.g.toString(16) +
+            this.color_selected.b.toString(16);
+          this.color_value_string =
+            this.color_value +
+            ": RGB(" +
+            this.color_selected.r.toString() +
+            ", " +
+            this.color_selected.g.toString() +
+            ", " +
+            this.color_selected.b.toString() +
+            ")";
+        },
+
+        upload_image: function (process_type) {
+          this.$refs.upload.submit();
+        },
+
+        open_video: function () {
+          this.$refs.video_input.click();
+        },
+
+        video_loaded: function () {
+          this.video_ready = true;
+        },
+
+        video_lock: function () {
+          if (this.video_controls) {
+            if (!this.video_ready) {
+              this.$message("Video source needed before locking");
+            } else {
+              this.$message("video player control disabled");
+              this.$refs.video.pause();
+              this.video_controls = false;
+            }
+          } else {
+            this.$message("video player control enabled");
+            this.video_controls = true;
+          }
+        },
+
+        video_start_reacord: function () {
+          if (!this.video_ready) {
+            return;
+          }
+          this.video_frame_next = 0;
+          this.video_frame_total = Math.ceil(
+            this.$refs.video.duration / this.video_frame_interval
+          );
+          this.video_frame_current = 0;
+          this.video_frame_data = { r: [], g: [], b: [], gray: [] };
+          for (let i = 0; i < this.setting_page_item.length; i = i + 1) {
+            this.video_frame_data.r.push([]);
+            this.video_frame_data.g.push([]);
+            this.video_frame_data.b.push([]);
+            this.video_frame_data.gray.push([]);
+          }
+          this.video_charts = echarts.init(this.$refs.video_charts);
+          this.video_frame_data_time = [];
+          this.video_extract();
+        },
+
+        video_extract: function (single = false) {
+          if (!single) {
+            this.$refs.video.currentTime = this.video_frame_next;
+            this.video_frame_data_time.push(this.video_frame_next);
+            this.video_frame_next =
+              this.video_frame_next + this.video_frame_interval;
+          }
+          this.$refs.video.pause();
+          const canvas = document.createElement("canvas");
+          const ctx = canvas.getContext("2d");
+          canvas.width = this.$refs.video.videoWidth;
+          canvas.height = this.$refs.video.videoHeight;
+          ctx.drawImage(this.$refs.video, 0, 0);
+          canvas.toBlob((blob) => {
+            let formData = new FormData();
+            formData.append("file", blob, "image.jpg");
+            if (single) {
+              let img = new Image();
+              img.onload = () => {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0);
+                this.setting_page_item.forEach((i, index) => {
+                  let result = this.color_calc(
+                    ctx.getImageData(
+                      i.pos.x - i.radius,
+                      i.pos.y - i.radius,
+                      2 * i.radius + 1,
+                      2 * i.radius + 1
+                    ).data,
+                    i.radius,
+                    i.type,
+                    i.range
+                  );
+                  console.log(result)
+                  let rgb = result.r * 65536 + result.g * 256 + result.b;
+                  rgb = rgb.toString(16);
+                  while (rgb.length < 6) {
+                    rgb = "0" + rgb;
+                  }
+                  this.setting_page_item[index].color = "#" + rgb.toString();
+                });
+              };
+              link = URL.createObjectURL(blob);
+              img.src = link;
+            } else {
+              axios
+                .post("/upload/", formData)
+                .then((response) => {
+                  if (response.data.status != 0) {
+                    axios
+                      .post(
+                        "/download/",
+                        { name: response.data.file },
+                        { responseType: "blob" }
+                      )
+                      .then((response) => {
+                        this.video_frame_blob = response.data.slice(
+                          0,
+                          response.data.size,
+                          "image/jpeg"
+                        );
+                        this.video_frame_blob_url = URL.createObjectURL(
+                          this.video_frame_blob
+                        );
+                        let img = new Image();
+                        img.onload = () => {
+                          ctx.drawImage(img, 0, 0);
+                          this.setting_page_item.forEach((i, index) => {
+                            result = this.color_calc(
+                              ctx.getImageData(
+                                i.pos.x - i.radius,
+                                i.pos.y - i.radius,
+                                2 * i.radius + 1,
+                                2 * i.radius + 1
+                              ).data,
+                              i.radius,
+                              i.type,
+                              i.range
+                            );
+                            this.video_frame_data.r[index].push(result.r);
+                            this.video_frame_data.g[index].push(result.g);
+                            this.video_frame_data.b[index].push(result.b);
+                            this.video_frame_data.gray[index].push(result.gray);
+                          });
+                          this.video_frame_current =
+                            this.video_frame_current + 1;
+                          if (
+                            this.video_frame_next < this.$refs.video.duration
+                          ) {
+                            setTimeout(this.video_extract, 10);
+                          }
+                        };
+                        img.src = this.video_frame_blob_url;
+                      });
+                  }
+                })
+                .catch((e) => {
+                  console.log(e);
+                });
+            }
+          }, "image/jpeg");
+          //const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          //console.log(imageData);
+          //this.video_frame_current = this.video_frame_current + 1;
+          //if (this.video_frame_next < this.$refs.video.duration) {
+          //  setTimeout(this.video_extract, 10);
+          //}
+        },
+
+        color_calc: function (arr, rad, type, range) {
+          t = { r: [], g: [], b: [], gray: [] };
+          w = 2 * rad + 1;
+          if (type == "circle") {
+            for (let i = -rad; i <= rad; i = i + 1) {
+              for (let j = -rad; j <= rad; j = j + 1) {
+                if (i ** 2 + j ** 2 <= rad ** 2) {
+                  t.r.push(arr[4 * ((i + rad) * w + (j + rad)) + 0]);
+                  t.g.push(arr[4 * ((i + rad) * w + (j + rad)) + 1]);
+                  t.b.push(arr[4 * ((i + rad) * w + (j + rad)) + 2]);
+                }
+              }
+            }
+          } else if (type == "square") {
+            for (let i = -rad; i <= rad; i = i + 1) {
+              for (let j = -rad; j <= rad; j = j + 1) {
+                t.r.push(arr[4 * ((i + rad) * w + (j + rad)) + 0]);
+                t.g.push(arr[4 * ((i + rad) * w + (j + rad)) + 1]);
+                t.b.push(arr[4 * ((i + rad) * w + (j + rad)) + 2]);
+              }
+            }
+          }
+          //gray scale
+          for (let i = 0; i < t.r.length; i = i + 1) {
+            t.gray.push(0.2989 * t.r[i] + 0.587 * t.g[i] + 0.114 * t.b[i]);
+          }
+          //range
+          if (range == "max") {
+            return {
+              r: Math.max(...t.r),
+              g: Math.max(...t.g),
+              b: Math.max(...t.b),
+              gray: Math.max(...t.gray),
+            };
+          } else if (range == "min") {
+            return {
+              r: Math.min(...t.r),
+              g: Math.min(...t.g),
+              b: Math.min(...t.b),
+              gray: Math.min(...t.gray),
+            };
+          } else if (range == "average") {
+            r_sum = 0;
+            g_sum = 0;
+            b_sum = 0;
+            gray_sum = 0;
+            for (let i = 0; i < t.r.length; i = i + 1) {
+              r_sum = r_sum + t.r[i];
+              g_sum = g_sum + t.g[i];
+              b_sum = b_sum + t.b[i];
+              gray_sum = gray_sum + t.gray[i];
+            }
+            return {
+              r: r_sum / t.r.length,
+              g: g_sum / t.r.length,
+              b: b_sum / t.r.length,
+              gray: gray_sum / t.r.length,
+            };
+          }
+        },
+
+        render_video_chart: function () {
+          this.video_charts = echarts.init(this.$refs.video_charts);
+          vd = [
+            this.video_frame_data.r,
+            this.video_frame_data.g,
+            this.video_frame_data.b,
+            this.video_frame_data.gray,
+          ];
+          v = vd[this.video_frame_channel];
+          series = [];
+          x = [];
+          for (let i = 0; i < v[0].length; i = i + 1) {
+            x.push(i * this.video_frame_interval);
+          }
+          v.forEach((i, index) => {
+            series.push({
+              name: "Point #" + String(index),
+              type: "line",
+              data: i,
+            });
+          });
+          console.log(series);
+          this.video_charts.setOption({
+            title: { text: "Color value" },
+            xAxis: {
+              type: "category",
+              data: x,
+            },
+            yAxis: {
+              type: "value",
+            },
+            series: series,
+          });
+        },
+
+        video_file_select: function (e) {
+          this.video_ready = false;
+          let url = URL.createObjectURL(this.$refs.video_input.files[0]);
+          this.$refs.video.addEventListener("loadeddata", this.video_loaded);
+          this.$refs.video.src = url;
+        },
+
+        cover_click: function (e) {
+          if (!this.video_ready) {
+            return;
+          }
+          this.update_color();
+          color_point_clicked = {};
+          color_point_clicked.x = e.offsetX;
+          color_point_clicked.y = e.offsetY;
+          color_point_clicked.x = Math.ceil(
+            color_point_clicked.x *
+              (this.$refs.video.videoWidth / this.$refs.cover.offsetWidth)
+          );
+          color_point_clicked.y = Math.ceil(
+            color_point_clicked.y *
+              (this.$refs.video.videoHeight / this.$refs.cover.offsetHeight)
+          );
+          this.setting_page_item[this.setting_page_index].pos.x =
+            color_point_clicked.x;
+          this.setting_page_item[this.setting_page_index].pos.y =
+            color_point_clicked.y;
+          this.cover_update();
+        },
+
+        cover_update: function (e) {
+          if (typeof e == "string") {
+            this.update_color();
+          }
+          let canvas = this.$refs.cover;
+          canvas.width = this.$refs.video.videoWidth;
+          canvas.height = this.$refs.video.videoHeight;
+          let ctx = this.$refs.cover.getContext("2d");
+          ctx.beginPath();
+          this.setting_page_item.forEach((i) => {
+            if (i.type == "circle") {
+              ctx.moveTo(i.pos.x + i.radius, i.pos.y);
+              ctx.arc(i.pos.x, i.pos.y, i.radius, 0, Math.PI * 2, true);
+            } else if (i.type == "square") {
+              ctx.moveTo(i.pos.x - i.radius, i.pos.y - i.radius);
+              ctx.lineTo(i.pos.x - i.radius, i.pos.y + i.radius);
+              ctx.lineTo(i.pos.x + i.radius, i.pos.y + i.radius);
+              ctx.lineTo(i.pos.x + i.radius, i.pos.y - i.radius);
+              ctx.lineTo(i.pos.x - i.radius, i.pos.y - i.radius);
+            }
+          });
+          ctx.stroke();
+        },
+
+        setting_page_show: function () {
+          this.setting_page_visible = true;
+        },
+
+        setting_page_delete_button_clicked: function (itemId) {
+          if (this.setting_page_item.length == 1) {
+            this.$message("Cannot delete final point");
+            return;
+          }
+          this.setting_page_item.splice(itemId, 1);
+          this.cover_update();
+        },
+
+        setting_page_add_button_clicked: function (itemId) {
+          this.setting_page_item.splice(itemId + 1, 0, {
+            pos: { x: 0, y: 0 },
+            radius: 5,
+            type: "circle",
+            range: "average",
+            color: "#000000",
+          });
+        },
+
+        setting_page_change: function () {
+          if (typeof this.setting_page_index_display != "string") {
+            this.setting_page_index = this.setting_page_index_display;
+          }
+        },
+
+        download_dataset: function () {
+          arr = "Time, ";
+          this.video_frame_data.r.forEach((i, index) => {
+            arr = arr + "P" + String(index) + ".r, ";
+            arr = arr + "P" + String(index) + ".g, ";
+            arr = arr + "P" + String(index) + ".b, ";
+          });
+          arr = arr + "\n";
+          this.video_frame_data.r[0].forEach((i, index) => {
+            arr = arr + String(this.video_frame_data_time[index]);
+            this.video_frame_data.r.forEach((j, indexj) => {
+              arr = arr + "," + String(this.video_frame_data.r[indexj][index]);
+              arr = arr + "," + String(this.video_frame_data.g[indexj][index]);
+              arr = arr + "," + String(this.video_frame_data.b[indexj][index]);
+            });
+            arr = arr + "\n";
+          });
+          const file = new File([arr], "dataset.csv", {
+            type: "text/plain",
+          });
+          const tmpLink = document.createElement("a");
+          const objectUrl = URL.createObjectURL(file);
+
+          tmpLink.href = objectUrl;
+          tmpLink.download = file.name;
+          document.body.appendChild(tmpLink);
+          tmpLink.click();
+
+          document.body.removeChild(tmpLink);
+          URL.revokeObjectURL(objectUrl);
+        },
+
+        export_config: function () {
+          let arr = JSON.stringify(this.setting_page_item);
+          const file = new File([arr], "config.json", {
+            type: "application/json",
+          });
+          const tmpLink = document.createElement("a");
+          const objectUrl = URL.createObjectURL(file);
+
+          tmpLink.href = objectUrl;
+          tmpLink.download = file.name;
+          document.body.appendChild(tmpLink);
+          tmpLink.click();
+
+          document.body.removeChild(tmpLink);
+          URL.revokeObjectURL(objectUrl);
+        },
+
+        import_config: function () {
+          const tmplink = document.createElement("input");
+          tmplink.setAttribute("type", "file");
+          tmplink.setAttribute("accept", "application/json");
+          tmplink.addEventListener("change", () => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              this.setting_page_item = JSON.parse(e.target.result);
+            };
+            reader.readAsText(tmplink.files[0]);
+          });
+          tmplink.click();
+        },
+
+        update_color: function () {
+          this.video_extract(true);
+        },
+
+        open_camera: function () {
+          let getUserMedia = (constraints, success, error) => {
+            if (navigator.mediaDevices.getUserMedia) {
+              navigator.mediaDevices
+                .getUserMedia(constraints)
+                .then(success)
+                .catch(error);
+            } else if (navigator.webkitGetUserMedia) {
+              navigator.webkitGetUserMedia(constraints, success, error);
+            } else if (navigator.mozGetUserMedia) {
+              navigator.mozGetUserMedia(constraints, success, error);
+            } else if (navigator.getUserMedia) {
+              navigator.getUserMedia(constraints, success, error);
+            }
+          };
+          let success = (stream) => {
+            this.$refs.video.srcObject = stream;
+            this.$refs.video.play();
+          };
+
+          let error = (error) => {
+            this.$alert(error);
+          };
+          if (
+            navigator.mediaDevices ||
+            navigator.getUserMedia ||
+            navigator.webkitGetUserMedia ||
+            navigator.mozGetUserMedia
+          ) {
+            getUserMedia(
+              {
+                video: {
+                  width: 1920,
+                  height: 1080,
+                  facingMode: { ideal: "environment" },
+                },
+              },
+              success,
+              error
+            );
+          } else {
+            this.$alert("Camera not detected");
+          }
+        },
+
+        start_record: function () {},
+      },
+
+      mounted: function () {
+        if (
+          /Mobi|Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+            navigator.userAgent
+          )
+        ) {
+          this.camera_size.width = 1080;
+          this.camera_size.height = 1920;
+        } else {
+          this.camera_size.width = 1920;
+          this.camera_size.height = 1080;
+        }
+      },
+    });
+  </script>
+</html>
